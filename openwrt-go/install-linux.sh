@@ -8,7 +8,7 @@
 
 set -e
 
-VERSION="v1.3.0"
+VERSION="v1.3.1"
 REPO="ackd7/MochiLedger-SyncServer"
 BIN_PATH="/usr/local/bin/mochiledger-sync"
 SERVICE_PATH="/etc/systemd/system/mochiledger-sync.service"
@@ -71,7 +71,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${BIN_PATH} -addr [::]:${PORT} -data ${DATA_DIR} -token ${SYNC_TOKEN}
+ExecStart=${BIN_PATH} -addr :${PORT} -data ${DATA_DIR} -token ${SYNC_TOKEN}
 Restart=always
 RestartSec=5
 WorkingDirectory=${DATA_DIR}

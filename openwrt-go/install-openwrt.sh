@@ -9,7 +9,7 @@
 
 set -e
 
-VERSION="v1.3.0"
+VERSION="v1.3.1"
 REPO="ackd7/MochiLedger-SyncServer"
 BIN_PATH="/usr/bin/mochiledger-sync"
 INIT_PATH="/etc/init.d/mochiledger-sync"
@@ -74,7 +74,7 @@ USE_PROCD=1
 
 PROG="$BIN_PATH"
 DATA_DIR="$DATA_DIR"
-LISTEN_ADDR="[::]:$PORT"
+LISTEN_ADDR=":$PORT"
 SYNC_TOKEN="$SYNC_TOKEN"
 
 start_service() {

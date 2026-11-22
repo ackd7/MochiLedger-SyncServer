@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -18,7 +19,7 @@ import (
 	"time"
 )
 
-const ServerVersion = "1.3.0"
+const ServerVersion = "1.3.1"
 
 type FileConfig struct {
 	Addr     string `json:"addr"`
@@ -347,9 +348,13 @@ func newHandler(store *Store, token string) http.Handler {
 			return
 		}
 
-		if token != "" && strings.TrimSpace(r.Header.Get("Authorization")) != "Bearer "+token {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid Bearer token"})
-			return
+		if token != "" {
+			got := strings.TrimSpace(r.Header.Get("Authorization"))
+			expected := "Bearer " + token
+			if len(got) != len(expected) || subtle.ConstantTimeCompare([]byte(got), []byte(expected)) != 1 {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid Bearer token"})
+				return
+			}
 		}
 
 		path := strings.TrimRight(r.URL.Path, "/")
@@ -367,6 +372,7 @@ func newHandler(store *Store, token string) http.Handler {
 			})
 
 		case r.Method == http.MethodPost && path == "/api/v1/sync":
+			r.Body = http.MaxBytesReader(w, r.Body, 32<<20) // 32MB safety cap
 			var req SyncRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Snapshot == nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON sync payload"})
@@ -435,13 +441,13 @@ func defaultConfigPath() string {
 
 func loadOrInitFileConfig(configPath string, autoCreate bool) FileConfig {
 	cfg := FileConfig{
-		Addr:    "[::]:8787",
+		Addr:    ":8787",
 		DataDir: defaultDataDir(),
 	}
 	if b, err := os.ReadFile(configPath); err == nil {
 		_ = json.Unmarshal(b, &cfg)
 		if cfg.Addr == "" {
-			cfg.Addr = "[::]:8787"
+			cfg.Addr = ":8787"
 		}
 		if cfg.DataDir == "" {
 			cfg.DataDir = defaultDataDir()
@@ -540,7 +546,7 @@ func main() {
 		return fallback
 	}
 
-	addr := resolve(*addrFlag, "MOCHI_ADDR", cfg.Addr, "[::]:8787")
+	addr := resolve(*addrFlag, "MOCHI_ADDR", cfg.Addr, ":8787")
 	dataDir := resolve(*dataFlag, "MOCHI_DATA_DIR", cfg.DataDir, defaultDataDir())
 	token := resolve(*tokenFlag, "MOCHI_SYNC_TOKEN", cfg.Token, "")
 	certFile := resolve(*certFlag, "MOCHI_TLS_CERT", cfg.CertFile, "")
