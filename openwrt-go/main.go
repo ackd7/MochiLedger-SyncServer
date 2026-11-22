@@ -347,8 +347,8 @@ func newHandler(store *Store, token string) http.Handler {
 		case r.Method == http.MethodGet && (path == "/" || path == "/api/v1/health"):
 			writeJSON(w, http.StatusOK, HealthResponse{
 				Status:     "ok",
-				Service:    "MochiLedger Sync Server (OpenWrt Go)",
-				Version:    "1.1.0",
+				Service:    "MochiLedger Sync Server (OpenWrt / Cudy TR3000)",
+				Version:    "1.2.0",
 				ServerTime: time.Now().UnixMilli(),
 			})
 
@@ -394,14 +394,24 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	addr := flag.String("addr", envOr("MOCHI_ADDR", ":8787"), "Listen address (e.g. :8787)")
+	addr := flag.String("addr", envOr("MOCHI_ADDR", "[::]:8787"), "Dual-stack IPv4/IPv6 listen address (e.g. [::]:8787)")
 	dataDir := flag.String("data", envOr("MOCHI_DATA_DIR", "/etc/mochiledger/data"), "Directory for ledger JSON files")
 	token := flag.String("token", envOr("MOCHI_SYNC_TOKEN", ""), "Bearer authentication token")
+	certFile := flag.String("cert", envOr("MOCHI_TLS_CERT", ""), "Optional TLS certificate PEM file for HTTPS")
+	keyFile := flag.String("key", envOr("MOCHI_TLS_KEY", ""), "Optional TLS private key PEM file for HTTPS")
 	flag.Parse()
 
 	store := &Store{dataDir: *dataDir}
-	log.Printf("[MochiLedger OpenWrt Sync] Listening on %s (data=%s, auth=%v)", *addr, *dataDir, *token != "")
-	if err := http.ListenAndServe(*addr, newHandler(store, *token)); err != nil {
+	handler := newHandler(store, *token)
+	if *certFile != "" && *keyFile != "" {
+		log.Printf("[MochiLedger OpenWrt Sync] Listening HTTPS on %s (dual-stack IPv4/IPv6, data=%s, auth=%v)", *addr, *dataDir, *token != "")
+		if err := http.ListenAndServeTLS(*addr, *certFile, *keyFile, handler); err != nil {
+			log.Fatalf("HTTPS server stopped: %v", err)
+		}
+		return
+	}
+	log.Printf("[MochiLedger OpenWrt Sync] Listening HTTP on %s (dual-stack IPv4/IPv6, data=%s, auth=%v)", *addr, *dataDir, *token != "")
+	if err := http.ListenAndServe(*addr, handler); err != nil {
 		log.Fatalf("Server stopped: %v", err)
 	}
 }

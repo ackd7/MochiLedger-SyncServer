@@ -12,7 +12,23 @@
 
 ---
 
-## 方案零：部署在 OpenWrt 路由器硬件上（超轻量 Go 单文件）
+## 方案零：Cudy TR3000 (128M / MT7981B) 一键部署与 IPv6 直连
+
+针对 **Cudy TR3000 128M**（MT7981B `aarch64` 处理器、512MB 内存、128MB 闪存）专门提供了 **UPX LZMA 极限压缩版（仅 ~1.8MB）** 与 **一键安装脚本**（自动下载、配置 `procd` 开机自启、自动放行 OpenWrt IPv6 8787 端口防火墙、自动打印公网 IPv6 直连地址）：
+
+```sh
+# SSH 登录 Cudy TR3000 后执行（将 MySecretToken 替换为你自己的密码）：
+wget -O /tmp/install-cudy-tr3000.sh https://github.com/ackd7/MochiLedger-SyncServer/releases/download/v1.2.0/install-cudy-tr3000.sh
+sh /tmp/install-cudy-tr3000.sh MySecretToken 8787
+```
+
+安装完成后终端会直接输出你的：
+- **局域网地址**：`http://192.168.1.1:8787`
+- **IPv6 外网直连地址**：`http://[240e:...]:8787`（手机 5G / 外地电脑直接填入墨记「自建同步服务器」即可直连！）
+
+> **进阶推荐**：国内宽带公网 IPv6 地址隔几天会变化，建议在 Cudy TR3000 的 OpenWrt 里装一个 **Lucky** 或 **ddns-scripts** 把你的域名 `AAAA` 记录指向路由器的 IPv6（Lucky 还能自动签发免费 HTTPS 证书），客户端填 `https://sync.你的域名.com:8787` 即可永久免维护直连。
+
+### 其他 OpenWrt 通用架构手动部署
 
 专为 OpenWrt 路由器（小闪存、小内存、无 Docker/JVM）编写的零依赖静态编译程序，已预编译 **ARM64 / x86_64 / ARMv7 / MIPSLE** 四种架构：
 
