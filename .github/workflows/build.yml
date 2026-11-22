@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   verify-and-build:
-    name: Test Ktor Server & Verify Cloudflare Worker
+    name: Build OpenWrt Go Binaries, Ktor Server & Cloudflare Worker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,9 +21,23 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
       - uses: gradle/actions/setup-gradle@v4
       - name: Verify Cloudflare Worker JS syntax
         run: node --check cloudflare-worker/worker.js
+      - name: Test & Cross-Compile OpenWrt Static Binaries
+        working-directory: openwrt-go
+        run: |
+          go test -v ./...
+          mkdir -p ../dist-artifacts/openwrt
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-armv7 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-mipsle .
+          cp mochiledger-sync.init ../dist-artifacts/openwrt/mochiledger-sync.init
+          ls -lh ../dist-artifacts/openwrt/
       - name: Run Ktor Server Tests & Build Distribution
         working-directory: ktor-server
         run: |
@@ -31,14 +45,13 @@ jobs:
           ./gradlew test installDist --no-daemon
       - name: Package Artifacts
         run: |
-          mkdir -p dist-artifacts
           cd ktor-server/build/install && zip -r ../../../dist-artifacts/MochiLedger-SyncServer-ktor.zip MochiLedger-SyncServer
           cd ../../..
           cp cloudflare-worker/worker.js dist-artifacts/MochiLedger-SyncServer-cloudflare-worker.js
       - uses: actions/upload-artifact@v4
         with:
           name: mochiledger-sync-server-artifacts
-          path: dist-artifacts/*
+          path: dist-artifacts/**/*
 
   publish-release:
     name: Publish GitHub Release
@@ -50,18 +63,34 @@ jobs:
         with:
           name: mochiledger-sync-server-artifacts
           path: release-files
+      - name: Prepare Release Assets
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p out
+          cp release-files/MochiLedger-SyncServer-ktor.zip "out/MochiLedger-SyncServer-${TAG}-ktor.zip"
+          cp release-files/MochiLedger-SyncServer-cloudflare-worker.js "out/MochiLedger-SyncServer-${TAG}-cloudflare-worker.js"
+          cp release-files/openwrt/mochiledger-sync-linux-amd64 "out/mochiledger-sync-${TAG}-openwrt-amd64"
+          cp release-files/openwrt/mochiledger-sync-linux-arm64 "out/mochiledger-sync-${TAG}-openwrt-arm64"
+          cp release-files/openwrt/mochiledger-sync-linux-armv7 "out/mochiledger-sync-${TAG}-openwrt-armv7"
+          cp release-files/openwrt/mochiledger-sync-linux-mipsle "out/mochiledger-sync-${TAG}-openwrt-mipsle"
+          cp release-files/openwrt/mochiledger-sync.init "out/mochiledger-sync.init"
+          ls -lh out/
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          mv release-files/MochiLedger-SyncServer-ktor.zip "release-files/MochiLedger-SyncServer-${TAG}-ktor.zip"
-          mv release-files/MochiLedger-SyncServer-cloudflare-worker.js "release-files/MochiLedger-SyncServer-${TAG}-cloudflare-worker.js"
-          gh release create "${TAG}" release-files/* \
+          gh release create "${TAG}" out/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "MochiLedger SyncServer ${TAG}" \
             --notes "## MochiLedger SyncServer ${TAG}
 
-          [墨记 MochiLedger](https://github.com/ackd7/MochiLedger) 独立同步服务端仓库，提供两种部署形态：
-          - **Cloudflare Workers + KV（0 元无服务器）**：\`MochiLedger-SyncServer-${TAG}-cloudflare-worker.js\`
-          - **Ktor + Docker 自建服务端（NAS / VPS）**：\`MochiLedger-SyncServer-${TAG}-ktor.zip\`"
+          [墨记 MochiLedger](https://github.com/ackd7/MochiLedger) 独立同步服务端，提供 **3 种部署形态**：
+          1. **OpenWrt 路由器超轻量单文件（Go 静态编译，仅 ~6MB，内存占用 ~10MB，免 Docker/JVM）**：
+             - \`mochiledger-sync-${TAG}-openwrt-arm64\`（红米 AX6000 / 小米 AX3600 / R4S / R5S / N1 / MT7986 等 ARM64 硬路由）
+             - \`mochiledger-sync-${TAG}-openwrt-amd64\`（x86_64 软路由：N100 / J4125 等）
+             - \`mochiledger-sync-${TAG}-openwrt-armv7\`（32位 ARM 路由器）
+             - \`mochiledger-sync-${TAG}-openwrt-mipsle\`（MT7621 等 MIPS 小端路由器）
+             - \`mochiledger-sync.init\`（OpenWrt procd 开机自启脚本）
+          2. **Cloudflare Workers + KV（0 元免服务器）**：\`MochiLedger-SyncServer-${TAG}-cloudflare-worker.js\`
+          3. **Ktor + Docker 服务端（NAS / VPS）**：\`MochiLedger-SyncServer-${TAG}-ktor.zip\`"

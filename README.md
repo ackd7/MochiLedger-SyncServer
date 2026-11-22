@@ -6,8 +6,41 @@
 
 | 方案 | 目录 | 费用 / 环境 | 适用场景 |
 | :--- | :--- | :--- | :--- |
+| **OpenWrt 路由器单文件版** | `openwrt-go/` | **仅 ~6MB 二进制，内存 ~10MB，免 Docker/JVM** | 直接跑在家里的 OpenWrt 硬路由/软路由上，24 小时在线 |
 | **Cloudflare Workers + KV** | `cloudflare-worker/` | **免费（0 元，无需服务器）** | 不想买 VPS、不想本地电脑开机，自带全球 HTTPS |
 | **Ktor + Docker 服务端** | `ktor-server/` | 自有 NAS / VPS / 家庭服务器 | 数据完全落在自己硬盘里，内网/公网均可 |
+
+---
+
+## 方案零：部署在 OpenWrt 路由器硬件上（超轻量 Go 单文件）
+
+专为 OpenWrt 路由器（小闪存、小内存、无 Docker/JVM）编写的零依赖静态编译程序，已预编译 **ARM64 / x86_64 / ARMv7 / MIPSLE** 四种架构：
+
+1. **查看路由器 CPU 架构**（SSH 登录 OpenWrt）：
+   ```sh
+   uname -m
+   # aarch64 -> 下载 openwrt-arm64（红米AX6000 / R4S / R5S / N1 / MT7986）
+   # x86_64  -> 下载 openwrt-amd64（x86 软路由）
+   # armv7l  -> 下载 openwrt-armv7
+   # mips    -> 下载 openwrt-mipsle（MT7621 等）
+   ```
+2. **下载程序与开机自启脚本**（以 `arm64` 为例，从 [Releases](https://github.com/ackd7/MochiLedger-SyncServer/releases/latest) 下载对应架构）：
+   ```sh
+   wget -O /usr/bin/mochiledger-sync https://github.com/ackd7/MochiLedger-SyncServer/releases/latest/download/mochiledger-sync-v1.1.0-openwrt-arm64
+   chmod +x /usr/bin/mochiledger-sync
+
+   wget -O /etc/init.d/mochiledger-sync https://github.com/ackd7/MochiLedger-SyncServer/releases/latest/download/mochiledger-sync.init
+   chmod +x /etc/init.d/mochiledger-sync
+   ```
+3. **修改同步密钥并启动开机自启**：
+   ```sh
+   vi /etc/init.d/mochiledger-sync   # 修改 SYNC_TOKEN 为你自己的密码
+   /etc/init.d/mochiledger-sync enable
+   /etc/init.d/mochiledger-sync start
+   ```
+4. **客户端连接**：
+   - 家里局域网直连：`http://192.168.1.1:8787`（替换为你的 OpenWrt 路由器 IP）。
+   - 外网手机 5G 随时同步：配合 OpenWrt 自带的 **IPv6 + DDNS**、**Lucky 反向代理（自动 HTTPS）**、**Tailscale / ZeroTier** 或 **Cloudflare Tunnel (`cloudflared`)** 即可实现全网毫秒级直连。
 
 ---
 
