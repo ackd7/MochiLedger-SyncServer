@@ -1,0 +1,13 @@
+name = "mochiledger-sync"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Create your KV namespace first:
+#   npx wrangler kv namespace create MOCHI_KV
+# Then replace the id below with the generated namespace id:
+[[kv_namespaces]]
+binding = "MOCHI_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# Set your sync Bearer token securely via:
+#   npx wrangler secret put MOCHI_SYNC_TOKEN

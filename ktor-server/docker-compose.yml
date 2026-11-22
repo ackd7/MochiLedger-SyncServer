@@ -1,0 +1,15 @@
+services:
+  mochiledger-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mochiledger-sync
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      MOCHI_PORT: "8787"
+      MOCHI_DATA_DIR: "/data"
+      MOCHI_SYNC_TOKEN: "mochi-secret-token"
+    volumes:
+      - ./data:/data

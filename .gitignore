@@ -1,0 +1,10 @@
+.gradle/
+.idea/
+build/
+**/build/
+node_modules/
+.wrangler/
+data/
+*.iml
+.DS_Store
+Thumbs.db

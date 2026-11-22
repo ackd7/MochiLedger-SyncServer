@@ -1,0 +1,67 @@
+name: Build & Release MochiLedger SyncServer
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-build:
+    name: Test Ktor Server & Verify Cloudflare Worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify Cloudflare Worker JS syntax
+        run: node --check cloudflare-worker/worker.js
+      - name: Run Ktor Server Tests & Build Distribution
+        working-directory: ktor-server
+        run: |
+          chmod +x gradlew
+          ./gradlew test installDist --no-daemon
+      - name: Package Artifacts
+        run: |
+          mkdir -p dist-artifacts
+          cd ktor-server/build/install && zip -r ../../../dist-artifacts/MochiLedger-SyncServer-ktor.zip MochiLedger-SyncServer
+          cd ../../..
+          cp cloudflare-worker/worker.js dist-artifacts/MochiLedger-SyncServer-cloudflare-worker.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mochiledger-sync-server-artifacts
+          path: dist-artifacts/*
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [ verify-and-build ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mochiledger-sync-server-artifacts
+          path: release-files
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mv release-files/MochiLedger-SyncServer-ktor.zip "release-files/MochiLedger-SyncServer-${TAG}-ktor.zip"
+          mv release-files/MochiLedger-SyncServer-cloudflare-worker.js "release-files/MochiLedger-SyncServer-${TAG}-cloudflare-worker.js"
+          gh release create "${TAG}" release-files/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "MochiLedger SyncServer ${TAG}" \
+            --notes "## MochiLedger SyncServer ${TAG}
+
+          [墨记 MochiLedger](https://github.com/ackd7/MochiLedger) 独立同步服务端仓库，提供两种部署形态：
+          - **Cloudflare Workers + KV（0 元无服务器）**：\`MochiLedger-SyncServer-${TAG}-cloudflare-worker.js\`
+          - **Ktor + Docker 自建服务端（NAS / VPS）**：\`MochiLedger-SyncServer-${TAG}-ktor.zip\`"
