@@ -84,7 +84,7 @@ func (s *Store) MergeAndSave(ledgerID, deviceID string, incoming map[string]inte
 	}
 
 	var merged map[string]interface{}
-	if existing != nullMap() && len(existing) > 0 {
+	if existing != nil && len(existing) > 0 {
 		merged = mergeSnapshots(existing, incoming, now, deviceID)
 	} else {
 		merged = cloneMap(incoming)
@@ -108,8 +108,6 @@ func (s *Store) MergeAndSave(ledgerID, deviceID string, incoming map[string]inte
 	}
 	return merged, nil
 }
-
-func nullMap() map[string]interface{} { return nil }
 
 func cloneMap(src map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(src))
