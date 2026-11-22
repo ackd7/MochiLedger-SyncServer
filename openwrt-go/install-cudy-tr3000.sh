@@ -8,7 +8,7 @@
 
 set -e
 
-VERSION="v1.2.0"
+VERSION="v1.3.0"
 REPO="ackd7/MochiLedger-SyncServer"
 BIN_PATH="/usr/bin/mochiledger-sync"
 INIT_PATH="/etc/init.d/mochiledger-sync"

@@ -1,18 +1,32 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 )
+
+const ServerVersion = "1.3.0"
+
+type FileConfig struct {
+	Addr     string `json:"addr"`
+	DataDir  string `json:"dataDir"`
+	Token    string `json:"token"`
+	CertFile string `json:"certFile,omitempty"`
+	KeyFile  string `json:"keyFile,omitempty"`
+}
 
 type HealthResponse struct {
 	Status     string `json:"status"`
@@ -347,8 +361,8 @@ func newHandler(store *Store, token string) http.Handler {
 		case r.Method == http.MethodGet && (path == "/" || path == "/api/v1/health"):
 			writeJSON(w, http.StatusOK, HealthResponse{
 				Status:     "ok",
-				Service:    "MochiLedger Sync Server (OpenWrt / Cudy TR3000)",
-				Version:    "1.2.0",
+				Service:    fmt.Sprintf("MochiLedger Sync Server (%s/%s)", runtime.GOOS, runtime.GOARCH),
+				Version:    ServerVersion,
 				ServerTime: time.Now().UnixMilli(),
 			})
 
@@ -386,32 +400,164 @@ func newHandler(store *Store, token string) http.Handler {
 	})
 }
 
-func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+func randomToken() string {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return "mochi-sync-2026"
 	}
-	return fallback
+	return "mochi-" + hex.EncodeToString(b)
+}
+
+func isOpenWrt() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	_, err := os.Stat("/etc/openwrt_release")
+	return err == nil
+}
+
+func defaultDataDir() string {
+	if isOpenWrt() {
+		return "/etc/mochiledger/data"
+	}
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exe), "data")
+	}
+	return "./data"
+}
+
+func defaultConfigPath() string {
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exe), "config.json")
+	}
+	return "./config.json"
+}
+
+func loadOrInitFileConfig(configPath string, autoCreate bool) FileConfig {
+	cfg := FileConfig{
+		Addr:    "[::]:8787",
+		DataDir: defaultDataDir(),
+	}
+	if b, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(b, &cfg)
+		if cfg.Addr == "" {
+			cfg.Addr = "[::]:8787"
+		}
+		if cfg.DataDir == "" {
+			cfg.DataDir = defaultDataDir()
+		}
+		return cfg
+	}
+	if autoCreate {
+		cfg.Token = randomToken()
+		if encoded, err := json.MarshalIndent(cfg, "", "  "); err == nil {
+			_ = os.WriteFile(configPath, encoded, 0o600)
+			log.Printf("[MochiLedger] 首次运行，已自动生成配置文件：%s", configPath)
+		}
+	}
+	return cfg
+}
+
+func printStartupBanner(addr, dataDir, token string, https bool) {
+	scheme := "http"
+	if https {
+		scheme = "https"
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "8787"
+	}
+
+	var lanIPv4 []string
+	var pubIPv6 []string
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				ipNet, ok := a.(*net.IPNet)
+				if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() {
+					continue
+				}
+				if ip4 := ipNet.IP.To4(); ip4 != nil {
+					lanIPv4 = append(lanIPv4, ip4.String())
+				} else if ipNet.IP.IsGlobalUnicast() && !ipNet.IP.IsPrivate() {
+					pubIPv6 = append(pubIPv6, ipNet.IP.String())
+				}
+			}
+		}
+	}
+
+	fmt.Println("============================================================")
+	fmt.Printf("  墨记 MochiLedger 同步服务端 v%s (%s/%s)\n", ServerVersion, runtime.GOOS, runtime.GOARCH)
+	fmt.Println("============================================================")
+	fmt.Printf("  监听地址:  %s\n", addr)
+	fmt.Printf("  数据目录:  %s\n", dataDir)
+	if token != "" {
+		fmt.Printf("  同步密钥:  %s\n", token)
+	} else {
+		fmt.Println("  同步密钥:  (未设置，开放访问)")
+	}
+	fmt.Printf("  本机地址:  %s://127.0.0.1:%s\n", scheme, port)
+	for _, ip := range lanIPv4 {
+		fmt.Printf("  局域网:    %s://%s:%s\n", scheme, ip, port)
+	}
+	for _, ip := range pubIPv6 {
+		fmt.Printf("  公网IPv6:  %s://[%s]:%s\n", scheme, ip, port)
+	}
+	fmt.Println("============================================================")
 }
 
 func main() {
-	addr := flag.String("addr", envOr("MOCHI_ADDR", "[::]:8787"), "Dual-stack IPv4/IPv6 listen address (e.g. [::]:8787)")
-	dataDir := flag.String("data", envOr("MOCHI_DATA_DIR", "/etc/mochiledger/data"), "Directory for ledger JSON files")
-	token := flag.String("token", envOr("MOCHI_SYNC_TOKEN", ""), "Bearer authentication token")
-	certFile := flag.String("cert", envOr("MOCHI_TLS_CERT", ""), "Optional TLS certificate PEM file for HTTPS")
-	keyFile := flag.String("key", envOr("MOCHI_TLS_KEY", ""), "Optional TLS private key PEM file for HTTPS")
+	cfgPath := flag.String("config", defaultConfigPath(), "Optional JSON config file path")
+	addrFlag := flag.String("addr", "", "Dual-stack IPv4/IPv6 listen address (e.g. [::]:8787)")
+	dataFlag := flag.String("data", "", "Directory for ledger JSON files")
+	tokenFlag := flag.String("token", "", "Bearer authentication token")
+	certFlag := flag.String("cert", "", "Optional TLS certificate PEM file for HTTPS")
+	keyFlag := flag.String("key", "", "Optional TLS private key PEM file for HTTPS")
 	flag.Parse()
 
-	store := &Store{dataDir: *dataDir}
-	handler := newHandler(store, *token)
-	if *certFile != "" && *keyFile != "" {
-		log.Printf("[MochiLedger OpenWrt Sync] Listening HTTPS on %s (dual-stack IPv4/IPv6, data=%s, auth=%v)", *addr, *dataDir, *token != "")
-		if err := http.ListenAndServeTLS(*addr, *certFile, *keyFile, handler); err != nil {
+	// Auto-create config.json on Windows (or non-OpenWrt interactive launch with no CLI flags)
+	noManualToken := *tokenFlag == "" && strings.TrimSpace(os.Getenv("MOCHI_SYNC_TOKEN")) == ""
+	autoCreate := runtime.GOOS == "windows" && noManualToken
+	cfg := loadOrInitFileConfig(*cfgPath, autoCreate)
+
+	resolve := func(cliVal, envKey, fileVal, fallback string) string {
+		if v := strings.TrimSpace(cliVal); v != "" {
+			return v
+		}
+		if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+			return v
+		}
+		if v := strings.TrimSpace(fileVal); v != "" {
+			return v
+		}
+		return fallback
+	}
+
+	addr := resolve(*addrFlag, "MOCHI_ADDR", cfg.Addr, "[::]:8787")
+	dataDir := resolve(*dataFlag, "MOCHI_DATA_DIR", cfg.DataDir, defaultDataDir())
+	token := resolve(*tokenFlag, "MOCHI_SYNC_TOKEN", cfg.Token, "")
+	certFile := resolve(*certFlag, "MOCHI_TLS_CERT", cfg.CertFile, "")
+	keyFile := resolve(*keyFlag, "MOCHI_TLS_KEY", cfg.KeyFile, "")
+
+	store := &Store{dataDir: dataDir}
+	handler := newHandler(store, token)
+
+	if certFile != "" && keyFile != "" {
+		printStartupBanner(addr, dataDir, token, true)
+		if err := http.ListenAndServeTLS(addr, certFile, keyFile, handler); err != nil {
 			log.Fatalf("HTTPS server stopped: %v", err)
 		}
 		return
 	}
-	log.Printf("[MochiLedger OpenWrt Sync] Listening HTTP on %s (dual-stack IPv4/IPv6, data=%s, auth=%v)", *addr, *dataDir, *token != "")
-	if err := http.ListenAndServe(*addr, handler); err != nil {
+	printStartupBanner(addr, dataDir, token, false)
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("Server stopped: %v", err)
 	}
 }

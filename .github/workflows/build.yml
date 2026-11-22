@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   verify-and-build:
-    name: Build Cudy TR3000 / OpenWrt Binaries, Ktor Server & Cloudflare Worker
+    name: Build Windows, Linux, OpenWrt (UPX), Ktor & Cloudflare Worker
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,35 +25,63 @@ jobs:
         with:
           go-version: '1.22'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install UPX for ultra-small Cudy TR3000 128M binary
+      - name: Install UPX for ultra-small OpenWrt router binaries
         run: sudo apt-get update && sudo apt-get install -y upx-ucl
       - name: Verify Cloudflare Worker JS syntax
         run: node --check cloudflare-worker/worker.js
-      - name: Test & Cross-Compile OpenWrt Static Binaries
+
+      - name: Test & Cross-Compile Windows / Linux / OpenWrt Binaries
         working-directory: openwrt-go
         run: |
           go test -v ./...
-          mkdir -p ../dist-artifacts/openwrt
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-arm64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-armv7 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-linux-mipsle .
-          # Dedicated UPX-compressed ultra-compact binary for Cudy TR3000 128M (MT7981B aarch64)
-          cp ../dist-artifacts/openwrt/mochiledger-sync-linux-arm64 ../dist-artifacts/openwrt/mochiledger-sync-cudy-tr3000-arm64
-          upx --best --lzma ../dist-artifacts/openwrt/mochiledger-sync-cudy-tr3000-arm64
+          mkdir -p ../dist-artifacts/windows ../dist-artifacts/linux ../dist-artifacts/openwrt
+
+          # 1. Windows builds (packed with 1-click launcher & silent auto-start scripts)
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o ../dist-artifacts/windows/amd64/mochiledger-sync.exe .
+          cp windows-pack/*.bat ../dist-artifacts/windows/amd64/
+          (cd ../dist-artifacts/windows/amd64 && zip -r ../../MochiLedger-SyncServer-windows-amd64.zip .)
+
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags="-s -w" -o ../dist-artifacts/windows/arm64/mochiledger-sync.exe .
+          cp windows-pack/*.bat ../dist-artifacts/windows/arm64/
+          (cd ../dist-artifacts/windows/arm64 && zip -r ../../MochiLedger-SyncServer-windows-arm64.zip .)
+
+          # 2. Linux server / VPS / NAS / Raspberry Pi static builds
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../dist-artifacts/linux/mochiledger-sync-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../dist-artifacts/linux/mochiledger-sync-linux-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o ../dist-artifacts/linux/mochiledger-sync-linux-armv7 .
+          cp install-linux.sh ../dist-artifacts/linux/install-linux.sh
+
+          # 3. OpenWrt router builds (UPX LZMA ultra-compact ~1.8MB for 128M/64M small-flash routers like Cudy TR3000)
+          cp ../dist-artifacts/linux/mochiledger-sync-linux-arm64 ../dist-artifacts/openwrt/mochiledger-sync-openwrt-arm64
+          cp ../dist-artifacts/linux/mochiledger-sync-linux-amd64 ../dist-artifacts/openwrt/mochiledger-sync-openwrt-amd64
+          cp ../dist-artifacts/linux/mochiledger-sync-linux-armv7 ../dist-artifacts/openwrt/mochiledger-sync-openwrt-armv7
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags="-s -w" -o ../dist-artifacts/openwrt/mochiledger-sync-openwrt-mipsle .
+
+          upx --best --lzma ../dist-artifacts/openwrt/mochiledger-sync-openwrt-arm64
+          upx --best --lzma ../dist-artifacts/openwrt/mochiledger-sync-openwrt-amd64
+          upx --best --lzma ../dist-artifacts/openwrt/mochiledger-sync-openwrt-armv7
+          upx --best --lzma ../dist-artifacts/openwrt/mochiledger-sync-openwrt-mipsle
+
+          # Dedicated alias for Cudy TR3000 128M (MT7981B ARM64)
+          cp ../dist-artifacts/openwrt/mochiledger-sync-openwrt-arm64 ../dist-artifacts/openwrt/mochiledger-sync-cudy-tr3000-arm64
           cp mochiledger-sync.init ../dist-artifacts/openwrt/mochiledger-sync.init
+          cp install-openwrt.sh ../dist-artifacts/openwrt/install-openwrt.sh
           cp install-cudy-tr3000.sh ../dist-artifacts/openwrt/install-cudy-tr3000.sh
-          ls -lh ../dist-artifacts/openwrt/
+
+          ls -lh ../dist-artifacts/ ../dist-artifacts/linux/ ../dist-artifacts/openwrt/
+
       - name: Run Ktor Server Tests & Build Distribution
         working-directory: ktor-server
         run: |
           chmod +x gradlew
           ./gradlew test installDist --no-daemon
-      - name: Package Artifacts
+
+      - name: Package Ktor & Cloudflare Worker
         run: |
           cd ktor-server/build/install && zip -r ../../../dist-artifacts/MochiLedger-SyncServer-ktor.zip MochiLedger-SyncServer
           cd ../../..
           cp cloudflare-worker/worker.js dist-artifacts/MochiLedger-SyncServer-cloudflare-worker.js
+
       - uses: actions/upload-artifact@v4
         with:
           name: mochiledger-sync-server-artifacts
@@ -73,13 +101,24 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           mkdir -p out
+          # Windows
+          cp release-files/MochiLedger-SyncServer-windows-amd64.zip "out/MochiLedger-SyncServer-${TAG}-windows-amd64.zip"
+          cp release-files/MochiLedger-SyncServer-windows-arm64.zip "out/MochiLedger-SyncServer-${TAG}-windows-arm64.zip"
+          # Linux
+          cp release-files/linux/mochiledger-sync-linux-amd64 "out/mochiledger-sync-${TAG}-linux-amd64"
+          cp release-files/linux/mochiledger-sync-linux-arm64 "out/mochiledger-sync-${TAG}-linux-arm64"
+          cp release-files/linux/mochiledger-sync-linux-armv7 "out/mochiledger-sync-${TAG}-linux-armv7"
+          cp release-files/linux/install-linux.sh "out/install-linux.sh"
+          # OpenWrt (UPX LZMA ultra-compact)
+          cp release-files/openwrt/mochiledger-sync-openwrt-arm64 "out/mochiledger-sync-${TAG}-openwrt-arm64"
+          cp release-files/openwrt/mochiledger-sync-openwrt-amd64 "out/mochiledger-sync-${TAG}-openwrt-amd64"
+          cp release-files/openwrt/mochiledger-sync-openwrt-armv7 "out/mochiledger-sync-${TAG}-openwrt-armv7"
+          cp release-files/openwrt/mochiledger-sync-openwrt-mipsle "out/mochiledger-sync-${TAG}-openwrt-mipsle"
           cp release-files/openwrt/mochiledger-sync-cudy-tr3000-arm64 "out/mochiledger-sync-${TAG}-cudy-tr3000-arm64"
+          cp release-files/openwrt/install-openwrt.sh "out/install-openwrt.sh"
           cp release-files/openwrt/install-cudy-tr3000.sh "out/install-cudy-tr3000.sh"
-          cp release-files/openwrt/mochiledger-sync-linux-amd64 "out/mochiledger-sync-${TAG}-openwrt-amd64"
-          cp release-files/openwrt/mochiledger-sync-linux-arm64 "out/mochiledger-sync-${TAG}-openwrt-arm64"
-          cp release-files/openwrt/mochiledger-sync-linux-armv7 "out/mochiledger-sync-${TAG}-openwrt-armv7"
-          cp release-files/openwrt/mochiledger-sync-linux-mipsle "out/mochiledger-sync-${TAG}-openwrt-mipsle"
           cp release-files/openwrt/mochiledger-sync.init "out/mochiledger-sync.init"
+          # Ktor & Cloudflare Worker
           cp release-files/MochiLedger-SyncServer-ktor.zip "out/MochiLedger-SyncServer-${TAG}-ktor.zip"
           cp release-files/MochiLedger-SyncServer-cloudflare-worker.js "out/MochiLedger-SyncServer-${TAG}-cloudflare-worker.js"
           ls -lh out/
@@ -93,12 +132,21 @@ jobs:
             --title "MochiLedger SyncServer ${TAG}" \
             --notes "## MochiLedger SyncServer ${TAG}
 
-          ### Cudy TR3000 (128M / MT7981B ARM64) 专属优化版
-          - **超小体积单文件**：\`mochiledger-sync-${TAG}-cudy-tr3000-arm64\`（UPX LZMA 极限压缩至 ~1.8 MB，专为 128MB 小闪存优化）
-          - **一键安装 + 自动放行 IPv6 防火墙脚本**：\`install-cudy-tr3000.sh\`
-          - 支持双栈监听 \`[::]:8787\`（局域网 IPv4 + 外网 IPv6 直连）及可选 HTTPS 证书（\`-cert\` / \`-key\`）。
+          全平台零依赖单文件同步服务端，支持 **Windows / Linux / OpenWrt / Cloudflare Workers / Docker**。
 
-          ### 其他通用版本
-          - **OpenWrt 通用架构**：\`openwrt-arm64\` / \`openwrt-amd64\` / \`openwrt-armv7\` / \`openwrt-mipsle\` + \`mochiledger-sync.init\`
-          - **Cloudflare Workers + KV**：\`MochiLedger-SyncServer-${TAG}-cloudflare-worker.js\`
-          - **Ktor + Docker 服务端**：\`MochiLedger-SyncServer-${TAG}-ktor.zip\`"
+          ### 1. Windows 绿色开箱即用版（双击即用）
+          - \`MochiLedger-SyncServer-${TAG}-windows-amd64.zip\`（通用 64 位 Windows）
+          - \`MochiLedger-SyncServer-${TAG}-windows-arm64.zip\`（ARM Windows）
+          - 解压后双击 \`启动同步服务.bat\` 即可自动生成 \`config.json\` 并打印连接地址与同步密钥；双击 \`配置开机自启.bat\` 一键开启静默后台自启。
+
+          ### 2. Linux 一键安装（Ubuntu / Debian / CentOS / 树莓派 / VPS / NAS）
+          - 一键脚本 \`install-linux.sh\` 自动识别架构并配置 \`systemd\` 后台自启服务。
+          - 独立二进制：\`linux-amd64\` / \`linux-arm64\` / \`linux-armv7\`。
+
+          ### 3. OpenWrt 路由器超小体积一键版（UPX LZMA 极限压缩 ~1.8MB）
+          - 全架构均采用与 Cudy TR3000 128M 同款 UPX LZMA 压缩（仅 ~1.8MB，内存 ~10MB）：\`openwrt-arm64\` / \`openwrt-amd64\` / \`openwrt-armv7\` / \`openwrt-mipsle\`。
+          - 通用一键脚本 \`install-openwrt.sh\` 自动识别架构、配置 \`procd\` 自启、放行 IPv6 防火墙，支持附加 Cloudflare Tunnel Token 一键穿透光猫。
+
+          ### 4. 其他部署形态
+          - **Cloudflare Workers + KV（0 元免服务器）**：\`MochiLedger-SyncServer-${TAG}-cloudflare-worker.js\`
+          - **Ktor + Docker**：\`MochiLedger-SyncServer-${TAG}-ktor.zip\`"
